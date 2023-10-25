@@ -11,11 +11,12 @@ class NCC(nn.Module):
     Normalized cross correlation loss (reimplemented using cumsum for acceleration).
     """
 
-    def __init__(self, win=9, eps=1e-5, use_double=True):
+    def __init__(self, win=9, eps=1e-5, use_double=False, safe_cumsum=True):
         """
         :param win: window size for local patch. Default: 9.
         :param eps: epsilon to avoid zero division. Default: 1e-5.
-        :param use_double: whether to use double precision. Default: True.
+        :param use_double: whether to use double precision to prevent overflow. Default: False.
+        :param safe_cumsum: whether to use the safe cumsum implementation to prevent overflow. Default: True.
         """
 
         super(NCC, self).__init__()
@@ -23,6 +24,7 @@ class NCC(nn.Module):
         self.win = 9 if win is None else win
         self.eps = eps
         self.use_double = use_double
+        self.safe_cumsum = safe_cumsum
 
     def cumsum(self, I):
         """
@@ -70,6 +72,55 @@ class NCC(nn.Module):
 
         return I_win
 
+    def cumsum_safe(self, I):
+        """
+        Compute the sum within each sliding window using cumsum.
+        :param I: input tensor
+        :return: window-wise sum (same size as the input tensor)
+        """
+
+        # Get dimension of volume
+        n_dims = len(list(I.size())) - 2
+        assert n_dims in (2, 3), 'Input tensor has to be 2D or 3D.'
+
+        # Compute padding
+        pad = self.win // 2
+        pad = [pad + 1, pad] * n_dims
+
+        # Pad input tensor
+        I_pad = F.pad(I, pad=pad, mode='constant', value=0)
+
+        if n_dims == 3:
+            x, y, z = I.shape[2:]
+
+            I_win = I_pad[:, :, self.win:, self.win:, self.win:] \
+                - I_pad[:, :, self.win:, self.win:, :z] \
+                - I_pad[:, :, self.win:, :y, self.win:] \
+                - I_pad[:, :, :x, self.win:, self.win:] \
+                + I_pad[:, :, :x, :y, self.win:] \
+                + I_pad[:, :, :x, self.win:, :z] \
+                + I_pad[:, :, self.win:, :y, :z] \
+                - I_pad[:, :, :x, :y, :z]
+
+            I_win_x = torch.cumsum(I_win, dim=2)
+            I_win_xy = torch.cumsum(I_win_x, dim=3)
+            I_win_xyz = torch.cumsum(I_win_xy, dim=4)
+
+            return I_win_xyz
+
+        else:
+            x, y = I.shape[2:]
+
+            I_win = I_pad[:, :, self.win:, self.win:] \
+                - I_pad[:, :, self.win:, :y] \
+                - I_pad[:, :, :x, self.win:] \
+                + I_pad[:, :, :x, :y]
+
+            I_win_x = torch.cumsum(I_win, dim=2)
+            I_win_xy = torch.cumsum(I_win_x, dim=3)
+
+            return I_win_xy
+
     def forward(self, I, J):
         """
         :param I: input tensor of shape (B, C, H, W) or (B, C, D, H, W).
@@ -92,11 +143,18 @@ class NCC(nn.Module):
         IJ = I * J
 
         # Window-wise sum
-        I_sum = self.cumsum(I)
-        J_sum = self.cumsum(J)
-        I2_sum = self.cumsum(I2)
-        J2_sum = self.cumsum(J2)
-        IJ_sum = self.cumsum(IJ)
+        if self.safe_cumsum:
+            I_sum = self.cumsum_safe(I)
+            J_sum = self.cumsum_safe(J)
+            I2_sum = self.cumsum_safe(I2)
+            J2_sum = self.cumsum_safe(J2)
+            IJ_sum = self.cumsum_safe(IJ)
+        else:
+            I_sum = self.cumsum(I)
+            J_sum = self.cumsum(J)
+            I2_sum = self.cumsum(I2)
+            J2_sum = self.cumsum(J2)
+            IJ_sum = self.cumsum(IJ)
 
         # Window-wise average
         win_size = self.win ** n_dims
@@ -185,23 +243,23 @@ if __name__ == '__main__':
 
     a = torch.rand(1, 1, 160, 192, 160).cuda()
     b = torch.rand(1, 1, 160, 192, 160).cuda()
-    ncc_vxm = NCC_vxm()
     ncc = NCC()
+    ncc_safe = NCC(safe_cumsum=True)
 
-    t0 = time.time()
+    # t0 = time.time()
     l1 = 0
     for i in range(100):
-        l1 += ncc_vxm(a, b)
+        l1 += ncc(a, b)
 
-    torch.cuda.current_stream().synchronize()
-    t1 = time.time()
+    # torch.cuda.current_stream().synchronize()
+    # t1 = time.time()
     l2 = 0
     for i in range(100):
-        l2 += ncc(a, b)
+        l2 += ncc_safe(a, b)
 
-    torch.cuda.current_stream().synchronize()
-    t2 = time.time()
+    # torch.cuda.current_stream().synchronize()
+    # t2 = time.time()
 
-    print('NCC_vxm: ', t1 - t0)
-    print('NCC: ', t2 - t1)
+    # print('NCC_vxm: ', t1 - t0)
+    # print('NCC: ', t2 - t1)
     print('Diff: ', l1 - l2)
