@@ -11,7 +11,7 @@ class NCC(nn.Module):
     Normalized cross correlation loss (reimplemented using cumsum for acceleration).
     """
 
-    def __init__(self, win=9, eps=1e-5, use_double=False, safe_cumsum=True):
+    def __init__(self, win=9, eps=1e-5, use_double=True, safe_cumsum=True):
         """
         :param win: window size for local patch. Default: 9.
         :param eps: epsilon to avoid zero division. Default: 1e-5.
@@ -44,15 +44,9 @@ class NCC(nn.Module):
         # Pad input tensor
         I_pad = F.pad(I, pad=pad, mode='constant', value=0)
 
-        # Compute cumsum
-        I_cs_x = torch.cumsum(I_pad, dim=2)
-        I_cs_xy = torch.cumsum(I_cs_x, dim=3)
-
         if n_dims == 3:
-            I_cs_xyz = torch.cumsum(I_cs_xy, dim=4)
-
+            I_cs_xyz = I_pad.cumsum(2).cumsum(3).cumsum(4)
             x, y, z = I.shape[2:]
-
             I_win = I_cs_xyz[:, :, self.win:, self.win:, self.win:] \
                 - I_cs_xyz[:, :, self.win:, self.win:, :z] \
                 - I_cs_xyz[:, :, self.win:, :y, self.win:] \
@@ -63,8 +57,8 @@ class NCC(nn.Module):
                 - I_cs_xyz[:, :, :x, :y, :z]
 
         else:
+            I_cs_xy = I_pad.cumsum(2).cumsum(3)
             x, y = I.shape[2:]
-
             I_win = I_cs_xy[:, :, self.win:, self.win:] \
                 - I_cs_xy[:, :, self.win:, :y] \
                 - I_cs_xy[:, :, :x, self.win:] \
@@ -92,34 +86,23 @@ class NCC(nn.Module):
 
         if n_dims == 3:
             x, y, z = I.shape[2:]
+            I_pad_clone = I_pad.clone()  # Cloning to prevent in-place operation
+            I_pad[:, :, self.win:, :, :] -= I_pad_clone[:, :, :x, :, :]
+            I_pad_clone = I_pad.clone()
+            I_pad[:, :, :, self.win:, :] -= I_pad_clone[:, :, :, :y, :]
+            I_pad_clone = I_pad.clone()
+            I_pad[:, :, :, :, self.win:] -= I_pad_clone[:, :, :, :, :z]
 
-            I_win = I_pad[:, :, self.win:, self.win:, self.win:] \
-                - I_pad[:, :, self.win:, self.win:, :z] \
-                - I_pad[:, :, self.win:, :y, self.win:] \
-                - I_pad[:, :, :x, self.win:, self.win:] \
-                + I_pad[:, :, :x, :y, self.win:] \
-                + I_pad[:, :, :x, self.win:, :z] \
-                + I_pad[:, :, self.win:, :y, :z] \
-                - I_pad[:, :, :x, :y, :z]
-
-            I_win_x = torch.cumsum(I_win, dim=2)
-            I_win_xy = torch.cumsum(I_win_x, dim=3)
-            I_win_xyz = torch.cumsum(I_win_xy, dim=4)
-
-            return I_win_xyz
+            return I_pad.cumsum(2)[:, :, self.win:, :, :].cumsum(3)[:, :, :, self.win:, :].cumsum(4)[:, :, :, :, self.win:]
 
         else:
             x, y = I.shape[2:]
+            I_pad_clone = I_pad.clone()
+            I_pad[:, :, self.win:, :] -= I_pad_clone[:, :, :x, :]
+            I_pad_clone = I_pad.clone()
+            I_pad[:, :, :, self.win:] -= I_pad_clone[:, :, :, :y]
 
-            I_win = I_pad[:, :, self.win:, self.win:] \
-                - I_pad[:, :, self.win:, :y] \
-                - I_pad[:, :, :x, self.win:] \
-                + I_pad[:, :, :x, :y]
-
-            I_win_x = torch.cumsum(I_win, dim=2)
-            I_win_xy = torch.cumsum(I_win_x, dim=3)
-
-            return I_win_xy
+            return I_pad.cumsum(2)[:, :, self.win:, :].cumsum(3)[:, :, :, self.win:]
 
     def forward(self, I, J):
         """
@@ -236,30 +219,60 @@ class NCC_vxm(nn.Module):
         return - torch.mean(cc)
 
 
-
 if __name__ == '__main__':
-    import time
     import torch
 
-    a = torch.rand(1, 1, 160, 192, 160).cuda()
-    b = torch.rand(1, 1, 160, 192, 160).cuda()
-    ncc = NCC()
+    a = torch.randn(1, 1, 160, 192, 160).cuda()
+    b = torch.randn(1, 1, 160, 192, 160).cuda()
+    ncc_vxm = NCC_vxm(n_channel=1)
+    ncc = NCC(safe_cumsum=False)
     ncc_safe = NCC(safe_cumsum=True)
 
-    # t0 = time.time()
-    l1 = 0
-    for i in range(100):
-        l1 += ncc(a, b)
+    l_vxm = 0
+    with torch.profiler.profile(
+        activities=[
+            torch.profiler.ProfilerActivity.CPU,
+            torch.profiler.ProfilerActivity.CUDA,
+        ],
+        profile_memory=True,
+        with_flops=True,
+    ) as p_vxm:
+        for i in range(10):
+            l_vxm += ncc_vxm(a, b)
 
-    # torch.cuda.current_stream().synchronize()
-    # t1 = time.time()
-    l2 = 0
-    for i in range(100):
-        l2 += ncc_safe(a, b)
+    l = 0
+    with torch.profiler.profile(
+        activities=[
+            torch.profiler.ProfilerActivity.CPU,
+            torch.profiler.ProfilerActivity.CUDA,
+        ],
+        profile_memory=True,
+        with_flops=True,
+    ) as p:
+        for i in range(10):
+            l += ncc(a, b)
 
-    # torch.cuda.current_stream().synchronize()
-    # t2 = time.time()
+    l_safe = 0
+    with torch.profiler.profile(
+        activities=[
+            torch.profiler.ProfilerActivity.CPU,
+            torch.profiler.ProfilerActivity.CUDA,
+        ],
+        profile_memory=True,
+        with_flops=True,
+    ) as p_safe:
+        for i in range(10):
+            l_safe += ncc_safe(a, b)
 
-    # print('NCC_vxm: ', t1 - t0)
-    # print('NCC: ', t2 - t1)
-    print('Diff: ', l1 - l2)
+    print(f'NCC_vxm: {l_vxm}')
+    print(f'NCC: {l}')
+    print(f'NCC_safe: {l_safe}')
+
+    with open('./ncc_vxm.txt', 'w') as f:
+        f.write(p_vxm.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
+
+    with open('./ncc.txt', 'w') as f:
+        f.write(p.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
+
+    with open('./ncc_safe.txt', 'w') as f:
+        f.write(p_safe.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
