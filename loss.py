@@ -228,51 +228,52 @@ if __name__ == '__main__':
     ncc = NCC(safe_cumsum=False)
     ncc_safe = NCC(safe_cumsum=True)
 
-    l_vxm = 0
-    with torch.profiler.profile(
-        activities=[
-            torch.profiler.ProfilerActivity.CPU,
-            torch.profiler.ProfilerActivity.CUDA,
-        ],
-        profile_memory=True,
-        with_flops=True,
-    ) as p_vxm:
-        for i in range(10):
-            l_vxm += ncc_vxm(a, b)
-
-    l = 0
-    with torch.profiler.profile(
-        activities=[
-            torch.profiler.ProfilerActivity.CPU,
-            torch.profiler.ProfilerActivity.CUDA,
-        ],
-        profile_memory=True,
-        with_flops=True,
-    ) as p:
-        for i in range(10):
-            l += ncc(a, b)
-
-    l_safe = 0
-    with torch.profiler.profile(
-        activities=[
-            torch.profiler.ProfilerActivity.CPU,
-            torch.profiler.ProfilerActivity.CUDA,
-        ],
-        profile_memory=True,
-        with_flops=True,
-    ) as p_safe:
-        for i in range(10):
-            l_safe += ncc_safe(a, b)
-
-    print(f'NCC_vxm: {l_vxm}')
-    print(f'NCC: {l}')
-    print(f'NCC_safe: {l_safe}')
-
-    with open('./ncc_vxm.txt', 'w') as f:
-        f.write(p_vxm.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
-
-    with open('./ncc.txt', 'w') as f:
-        f.write(p.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
-
-    with open('./ncc_safe.txt', 'w') as f:
-        f.write(p_safe.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
+    l = ncc(a, b)
+    # l_vxm = 0
+    # with torch.profiler.profile(
+    #     activities=[
+    #         torch.profiler.ProfilerActivity.CPU,
+    #         torch.profiler.ProfilerActivity.CUDA,
+    #     ],
+    #     profile_memory=True,
+    #     with_flops=True,
+    # ) as p_vxm:
+    #     for i in range(10):
+    #         l_vxm += ncc_vxm(a, b)
+    #
+    # l = 0
+    # with torch.profiler.profile(
+    #     activities=[
+    #         torch.profiler.ProfilerActivity.CPU,
+    #         torch.profiler.ProfilerActivity.CUDA,
+    #     ],
+    #     profile_memory=True,
+    #     with_flops=True,
+    # ) as p:
+    #     for i in range(10):
+    #         l += ncc(a, b)
+    #
+    # l_safe = 0
+    # with torch.profiler.profile(
+    #     activities=[
+    #         torch.profiler.ProfilerActivity.CPU,
+    #         torch.profiler.ProfilerActivity.CUDA,
+    #     ],
+    #     profile_memory=True,
+    #     with_flops=True,
+    # ) as p_safe:
+    #     for i in range(10):
+    #         l_safe += ncc_safe(a, b)
+    #
+    # print(f'NCC_vxm: {l_vxm}')
+    # print(f'NCC: {l}')
+    # print(f'NCC_safe: {l_safe}')
+    #
+    # with open('./ncc_vxm.txt', 'w') as f:
+    #     f.write(p_vxm.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
+    #
+    # with open('./ncc.txt', 'w') as f:
+    #     f.write(p.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
+    #
+    # with open('./ncc_safe.txt', 'w') as f:
+    #     f.write(p_safe.key_averages().table(sort_by='cuda_time_total', row_limit=-1))
