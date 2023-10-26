@@ -11,7 +11,7 @@ class NCC:
     def __init__(self,
                  win=None,
                  eps=1e-5,
-                 use_cumsum=True,
+                 use_cumsum=False,
                  signed=False,
                  safe_cumsum=True,
                  use_double=False,):
